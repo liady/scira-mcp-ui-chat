@@ -1,5 +1,5 @@
-import { experimental_createMCPClient as createMCPClient } from 'ai';
-
+import { jsonSchema } from "ai";
+import { z } from "zod";
 
 export interface KeyValuePair {
   key: string;
@@ -8,7 +8,7 @@ export interface KeyValuePair {
 
 export interface MCPServerConfig {
   url: string;
-  type: 'sse' | 'stdio';
+  type: "sse" | "stdio" | "http";
   command?: string;
   args?: string[];
   env?: KeyValuePair[];
@@ -16,7 +16,11 @@ export interface MCPServerConfig {
 }
 
 export interface MCPClientManager {
-  tools: Record<string, any>;
+  tools: Record<string, {
+    description: string;
+    parameters: any;
+    execute: (args: any) => Promise<any>;
+  }>;
   clients: any[];
   cleanup: () => Promise<void>;
 }
@@ -38,12 +42,12 @@ export async function initializeMCPClients(
     try {
       // All servers are handled as SSE
       const transport = {
-        type: 'sse' as const,
+        type: "http" as const,
         url: mcpServer.url,
         headers: mcpServer.headers?.reduce((acc, header) => {
-          if (header.key) acc[header.key] = header.value || '';
+          if (header.key) acc[header.key] = header.value || "";
           return acc;
-        }, {} as Record<string, string>)
+        }, {} as Record<string, string>),
       };
 
       const mcpClient = await createMCPClient({ transport });
@@ -63,7 +67,7 @@ export async function initializeMCPClients(
 
   // Register cleanup for all clients if an abort signal is provided
   if (abortSignal && mcpClients.length > 0) {
-    abortSignal.addEventListener('abort', async () => {
+    abortSignal.addEventListener("abort", async () => {
       await cleanupMCPClients(mcpClients);
     });
   }
@@ -71,7 +75,7 @@ export async function initializeMCPClients(
   return {
     tools,
     clients: mcpClients,
-    cleanup: async () => await cleanupMCPClients(mcpClients)
+    cleanup: async () => await cleanupMCPClients(mcpClients),
   };
 }
 
@@ -84,4 +88,65 @@ async function cleanupMCPClients(clients: any[]): Promise<void> {
       console.error("Error closing MCP client:", error);
     }
   }
-} 
+}
+
+async function createMCPClient({
+  transport,
+}: {
+  transport: { type: "http"; url: string; headers: Record<string, string> | undefined };
+}): Promise<{
+  tools: () => Promise<Record<string, {
+    description: string;
+    parameters: any;
+    execute: (args: any) => Promise<any>;
+  }>>;
+  close: () => Promise<void>;
+}> {
+  const { type, url, headers } = transport;
+  // Example request using the endpoint
+
+
+  return {
+    tools: async () => {
+      const tools = (await (await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer Aq4LeStB1GoP9xvZK67RjQwMne3F5kHuYDpC2VxBbYl8iTzR0mEJasN4hQeXtF9CwKuR1zH5oMjG8fP2RvD3qS6nY4bWxTgAl9FeRx' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'tools/list',
+          id: 1,
+        })
+      })).json()).result.tools as {name: string, description: string, inputSchema: any}[];
+      return tools.reduce<Record<string, {
+        description: string;
+        parameters: any;
+        execute: (args: any) => Promise<any>;
+      }>>((acc, tool) => {
+        acc[tool.name] = {
+          description: tool.description,
+          parameters: jsonSchema(tool.inputSchema),
+          execute: async (args: any) => {
+            const result = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer Aq4LeStB1GoP9xvZK67RjQwMne3F5kHuYDpC2VxBbYl8iTzR0mEJasN4hQeXtF9CwKuR1zH5oMjG8fP2RvD3qS6nY4bWxTgAl9FeRx' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'tools/call',
+                id: 1,
+                params: {
+                  name: tool.name,
+                  arguments: args,
+                },
+              }),
+            });
+            return (await result.json())?.result;
+          },
+        };
+        return acc;
+      }, {} as Record<string, any>);
+    },
+    close: async () => {
+      // No need to close the client
+    },
+  };
+}
