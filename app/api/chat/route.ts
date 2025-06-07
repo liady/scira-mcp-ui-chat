@@ -1,5 +1,5 @@
-import { model, type modelID } from "@/ai/providers";
-import { smoothStream, streamText, type UIMessage } from "ai";
+import { model, type modelID } from '@/ai/providers';
+import { smoothStream, streamText, type UIMessage } from 'ai';
 import { appendResponseMessages } from 'ai';
 import { nanoid } from 'nanoid';
 import { initializeMCPClients, type MCPServerConfig } from '@/lib/mcp-client';
@@ -27,10 +27,10 @@ export async function POST(req: Request) {
   } = await req.json();
 
   if (!userId) {
-    return new Response(
-      JSON.stringify({ error: "User ID is required" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: 'User ID is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   const id = chatId || nanoid();
@@ -40,8 +40,11 @@ export async function POST(req: Request) {
   // have been converted to SSE in the MCP context
   const { tools, cleanup } = await initializeMCPClients(mcpServers, req.signal);
 
-  console.log("messages", messages);
-  console.log("parts", messages.map(m => m.parts.map(p => p)));
+  console.log('messages', messages);
+  console.log(
+    'parts',
+    messages.map((m) => m.parts.map((p) => p))
+  );
 
   // Track if the response has completed
   let responseCompleted = false;
@@ -82,9 +85,9 @@ export async function POST(req: Request) {
       anthropic: {
         thinking: {
           type: 'enabled',
-          budgetTokens: 12000
+          budgetTokens: 12000,
         },
-      }
+      },
     },
     experimental_transform: smoothStream({
       delayInMs: 5, // optional: defaults to 10ms
@@ -93,35 +96,42 @@ export async function POST(req: Request) {
     onError: (error) => {
       console.error(JSON.stringify(error, null, 2));
     },
+    async onFinish() {
+      responseCompleted = true;
+
+      // Clean up resources - now this just closes the client connections
+      // not the actual servers which persist in the MCP context
+      await cleanup();
+    },
   });
 
   // Ensure cleanup happens if the request is terminated early
   req.signal.addEventListener('abort', async () => {
     if (!responseCompleted) {
-      console.log("Request aborted, cleaning up resources");
+      console.log('Request aborted, cleaning up resources');
       try {
         await cleanup();
       } catch (error) {
-        console.error("Error during cleanup on abort:", error);
+        console.error('Error during cleanup on abort:', error);
       }
     }
   });
 
-  result.consumeStream()
+  result.consumeStream();
   // Add chat ID to response headers so client can know which chat was created
   return result.toDataStreamResponse({
     sendReasoning: true,
     headers: {
-      'X-Chat-ID': id
+      'X-Chat-ID': id,
     },
     getErrorMessage: (error) => {
       if (error instanceof Error) {
-        if (error.message.includes("Rate limit")) {
-          return "Rate limit exceeded. Please try again later.";
+        if (error.message.includes('Rate limit')) {
+          return 'Rate limit exceeded. Please try again later.';
         }
       }
       console.error(error);
-      return "An error occurred.";
+      return 'An error occurred.';
     },
   });
 }
